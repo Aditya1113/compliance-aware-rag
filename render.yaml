@@ -1,0 +1,24 @@
+services:
+  - type: web
+    name: compliance-rag-backend
+    runtime: docker
+    plan: free
+    envVars:
+      - key: OPENAI_API_KEY
+        sync: false
+    dockerfilePath: ./Dockerfile
+    dockerCommand: uvicorn backend.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /api/health
+
+  - type: web
+    name: compliance-rag-frontend
+    runtime: docker
+    plan: free
+    envVars:
+      - key: BACKEND_URL
+        fromService:
+          name: compliance-rag-backend
+          type: web
+          property: host
+    dockerfilePath: ./Dockerfile
+    dockerCommand: streamlit run frontend/streamlit_app.py --server.port $PORT --server.address 0.0.0.0 --server.headless true
