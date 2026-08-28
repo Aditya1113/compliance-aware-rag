@@ -1,8 +1,8 @@
-"""Streamlit frontend for Compliance-Aware RAG."""
+"""Streamlit frontend for Compliance-Aware RAG — standalone mode for HF Spaces deployment."""
 
 import streamlit as st
-import requests
-import json
+import os
+import sys
 import time
 
 # --- Page config ---
@@ -13,24 +13,71 @@ st.set_page_config(
     initial_sidebar_state="expanded",
 )
 
-import os
-_default_api = os.environ.get("BACKEND_URL", "http://localhost:8000")
-API_URL = st.sidebar.text_input("Backend URL", value=_default_api, help="FastAPI backend URL")
+# --- Add backend to path ---
+APP_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+sys.path.insert(0, APP_DIR)
+
+
+# --- Load resources (cached so it only runs once) ---
+@st.cache_resource(show_spinner="Loading regulatory corpus, knowledge graph, and embeddings...")
+def load_pipeline_resources():
+    import spacy
+    from sentence_transformers import SentenceTransformer
+    from langchain_openai import OpenAIEmbeddings
+    from langchain_core.documents import Document
+    from langchain_community.vectorstores import FAISS
+
+    from backend.core.config import (
+        CORPUS_PATH, GRAPH_CACHE_PATH, FAISS_CACHE_DIR,
+        LOCAL_EMBEDDING_MODEL, OPENAI_EMBEDDING_MODEL,
+    )
+    from backend.core.corpus import load_corpus, build_article_index
+    from backend.core.graph import load_graph, embed_graph_nodes
+
+    nlp = spacy.load("en_core_web_sm")
+    embedder = SentenceTransformer(LOCAL_EMBEDDING_MODEL)
+    corpus, corpus_by_id = load_corpus(CORPUS_PATH)
+    article_index, _ = build_article_index(corpus)
+    G = load_graph(GRAPH_CACHE_PATH)
+    node_list, node_embeddings = embed_graph_nodes(G, embedder)
+
+    # Load FAISS — needs a placeholder key for deserialization only
+    openai_embeddings = OpenAIEmbeddings(
+        model=OPENAI_EMBEDDING_MODEL,
+        api_key=os.environ.get("OPENAI_API_KEY", "sk-placeholder"),
+    )
+    vectorstore = FAISS.load_local(
+        FAISS_CACHE_DIR, openai_embeddings,
+        allow_dangerous_deserialization=True,
+    )
+
+    return {
+        "corpus": corpus,
+        "corpus_by_id": corpus_by_id,
+        "article_index": article_index,
+        "G": G,
+        "node_list": node_list,
+        "node_embeddings": node_embeddings,
+        "embedder": embedder,
+        "nlp": nlp,
+        "vectorstore": vectorstore,
+    }
+
+
+resources = load_pipeline_resources()
 
 # --- Sidebar ---
 st.sidebar.title("Compliance-Aware RAG")
 st.sidebar.markdown("**Financial Regulatory QA** with knowledge-graph-augmented retrieval and post-generation validation.")
 st.sidebar.markdown("---")
 
-# API Key input
 api_key = st.sidebar.text_input(
     "OpenAI API Key",
     type="password",
     placeholder="sk-...",
-    help="Your key is sent per-request and never stored on the server.",
+    help="Your key is sent per-request and never stored. Required for GPT-4o-mini calls.",
 )
 
-# Strategy selector
 strategy = st.sidebar.selectbox(
     "Retrieval Strategy",
     options=["legal_hybrid", "legal_vector", "dense_vector", "graph"],
@@ -40,7 +87,6 @@ strategy = st.sidebar.selectbox(
         "dense_vector": "Dense Vector",
         "graph": "Graph-only",
     }[x],
-    help="Choose which retrieval strategy powers the answer.",
 )
 
 st.sidebar.markdown("---")
@@ -49,22 +95,23 @@ st.sidebar.markdown("""
 1. Your question is decomposed into requirements
 2. Evidence is retrieved using the selected strategy
 3. An answer is drafted from regulatory evidence
-4. Claims are extracted and validated against source text + knowledge graph
+4. Claims are validated against source text + knowledge graph
 5. If validation fails, one bounded revision is attempted
 6. Final answer is accepted or rejected with full audit trail
 """)
 
 st.sidebar.markdown("---")
-st.sidebar.markdown("""
+
+G = resources["G"]
+st.sidebar.markdown(f"""
 **Corpus:** MiFID II, MiFIR, Delegated Reg. 2017/565
-365 chunks | Knowledge graph with provenance
+{len(resources['corpus'])} chunks | {G.number_of_nodes()} graph nodes | {G.number_of_edges()} edges
 """)
 
 # --- Main area ---
 st.title("Compliance-Aware RAG")
 st.markdown("*Financial Regulatory Question Answering with Retrieval Validation*")
 
-# Example questions
 with st.expander("Example questions", expanded=False):
     examples = [
         "Under MiFID II Article 16(5), what are the principal responsibilities of an investment firm's independent compliance function?",
@@ -77,7 +124,6 @@ with st.expander("Example questions", expanded=False):
         if st.button(ex, key=f"ex_{hash(ex)}"):
             st.session_state["question_input"] = ex
 
-# Question input
 question = st.text_area(
     "Ask a regulatory compliance question:",
     value=st.session_state.get("question_input", ""),
@@ -97,47 +143,44 @@ if submit:
         st.error("Please enter a question (at least 10 characters).")
         st.stop()
 
-    with st.spinner("Running compliance-aware pipeline..."):
+    strategy_map = {
+        "dense_vector": "vector",
+        "legal_vector": "legal_vector",
+        "graph": "graph",
+        "legal_hybrid": "legal_hybrid",
+    }
+
+    with st.spinner("Running compliance-aware pipeline... (this takes 30-60s)"):
         start_time = time.time()
         try:
-            response = requests.post(
-                f"{API_URL}/api/ask",
-                json={"question": question, "strategy": strategy},
-                headers={"X-OpenAI-API-Key": api_key},
-                timeout=120,
+            from backend.core.pipeline import CompliancePipeline
+
+            pipeline = CompliancePipeline(
+                api_key=api_key,
+                **resources,
             )
-
-            if response.status_code == 401:
-                st.error("Invalid OpenAI API key. Please check your key.")
-                st.stop()
-            elif response.status_code != 200:
-                st.error(f"Error: {response.json().get('detail', response.text)}")
-                st.stop()
-
-            result = response.json()
+            result = pipeline.run(question, strategy=strategy_map[strategy])
             elapsed = time.time() - start_time
 
-        except requests.exceptions.ConnectionError:
-            st.error(f"Cannot connect to backend at {API_URL}. Is the server running?")
-            st.stop()
-        except requests.exceptions.Timeout:
-            st.error("Request timed out. The pipeline may need more time for complex questions.")
+        except Exception as e:
+            error_msg = str(e)
+            if "authentication" in error_msg.lower() or "api key" in error_msg.lower() or "invalid" in error_msg.lower():
+                st.error("Invalid OpenAI API key. Please check your key in the sidebar.")
+            else:
+                st.error(f"Pipeline error: {error_msg}")
             st.stop()
 
     # --- Display results ---
 
-    # Status badge
     status = result["final_status"]
     if status == "ACCEPTED":
         st.success(f"ACCEPTED  |  {elapsed:.1f}s  |  Strategy: {result['strategy']}")
     else:
         st.warning(f"REJECTED  |  {elapsed:.1f}s  |  Strategy: {result['strategy']}")
 
-    # Answer
     st.markdown("### Answer")
     st.markdown(result["answer"])
 
-    # Validation summary
     st.markdown("### Validation")
     val = result["validation"]
 
@@ -147,11 +190,9 @@ if submit:
     col_c.metric("Contradictions", val["source_contradictions"])
     col_d.metric("Whole-Answer", val["whole_answer_status"])
 
-    # Requirements
     if val.get("requirement_results"):
         st.markdown("#### Question Requirements")
         for req in val["requirement_results"]:
-            icon = {"SATISFIED": "check", "MISSING": "x", "UNSUPPORTED": "warning"}.get(req["status"], "question")
             if req["status"] == "SATISFIED":
                 st.markdown(f"- :white_check_mark: **{req['requirement']}** — {req['reason']}")
             elif req["status"] == "MISSING":
@@ -159,7 +200,6 @@ if submit:
             else:
                 st.markdown(f"- :warning: **{req['requirement']}** — {req['reason']}")
 
-    # Claims detail
     if val.get("claims"):
         st.markdown("#### Claim Verification")
         for claim in val["claims"]:
@@ -174,7 +214,6 @@ if submit:
                 f"{status_icon} `{claim['subject']}` —[{claim['relation']}]→ `{claim['object']}` : **{claim['final_status']}**"
             )
 
-    # Revision info
     if result.get("revised") and result.get("initial_validation"):
         st.markdown("#### Revision")
         iv = result["initial_validation"]
@@ -184,14 +223,12 @@ if submit:
             f"One revision was attempted."
         )
 
-    # Evidence
     with st.expander("Retrieved Document Evidence", expanded=False):
         for doc in result.get("doc_evidence", []):
             st.markdown(f"**{doc['source_id']}** ({doc['doc_id']})")
             st.text(doc["text"])
             st.markdown("---")
 
-    # Graph evidence
     with st.expander("Graph Evidence", expanded=False):
         for triple in result.get("graph_evidence", []):
             st.markdown(
@@ -199,6 +236,5 @@ if submit:
                 f"(hop={triple['depth']}, sources={', '.join(triple['source_ids'])})"
             )
 
-    # Raw JSON
     with st.expander("Full Pipeline Output (JSON)", expanded=False):
         st.json(result)
