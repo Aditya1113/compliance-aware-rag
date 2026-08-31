@@ -164,7 +164,7 @@ if submit:
 
         except Exception as e:
             error_msg = str(e)
-            if "authentication" in error_msg.lower() or "api key" in error_msg.lower() or "invalid" in error_msg.lower():
+            if "authentication" in error_msg.lower() or "api key" in error_msg.lower() or "Incorrect API key" in error_msg:
                 st.error("Invalid OpenAI API key. Please check your key in the sidebar.")
             else:
                 st.error(f"Pipeline error: {error_msg}")
