@@ -2,9 +2,12 @@
 
 import copy
 
+from langchain_openai import OpenAIEmbeddings
+
 from .config import (
     GENERATION_DOC_K, MAX_ATTEMPTS,
     CLAIM_EXTRACTION_MODEL, SOURCE_VERIFIER_MODEL,
+    OPENAI_EMBEDDING_MODEL,
 )
 from .corpus import docs_from_source_ids
 from .generation import (
@@ -31,6 +34,10 @@ class CompliancePipeline:
         self.embedder = embedder
         self.nlp = nlp
         self.vectorstore = vectorstore
+        # Swap the vectorstore's embedding function to use the user's API key
+        self.vectorstore.embedding_function = OpenAIEmbeddings(
+            model=OPENAI_EMBEDDING_MODEL, api_key=api_key,
+        )
 
         self.generation_llm = create_llm(api_key)
         self.claim_llm = create_llm(api_key, CLAIM_EXTRACTION_MODEL)
