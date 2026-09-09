@@ -178,6 +178,28 @@ if submit:
     else:
         st.warning(f"REJECTED  |  {elapsed:.1f}s  |  Strategy: {result['strategy']}")
 
+    # --- Pipeline Trace Timeline ---
+    if result.get("trace"):
+        st.markdown("### Pipeline Trace")
+        trace = result["trace"]
+        total_time = sum(s.get("duration_s", 0) for s in trace)
+
+        for step in trace:
+            dur = step.get("duration_s", 0)
+            pct = (dur / total_time * 100) if total_time > 0 else 0
+            col_name, col_bar, col_time = st.columns([2, 6, 1])
+            with col_name:
+                st.markdown(f"**{step['step']}**")
+            with col_bar:
+                st.progress(min(pct / 100, 1.0))
+            with col_time:
+                st.markdown(f"`{dur:.1f}s`")
+            if step.get("detail"):
+                st.caption(f"  {step['detail']}")
+
+        st.caption(f"Total pipeline time: {total_time:.1f}s")
+        st.markdown("---")
+
     st.markdown("### Answer")
     st.markdown(result["answer"])
 

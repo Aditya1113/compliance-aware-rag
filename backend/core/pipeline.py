@@ -1,6 +1,7 @@
 """Full compliance-aware RAG pipeline: retrieve -> draft -> validate -> revise/accept/reject."""
 
 import copy
+import time
 
 from langchain_openai import OpenAIEmbeddings
 
@@ -44,28 +45,45 @@ class CompliancePipeline:
         self.verifier_llm = create_llm(api_key, SOURCE_VERIFIER_MODEL)
 
     def run(self, query, strategy="legal_hybrid"):
+        trace = []
+
+        def _step(name):
+            return {"step": name, "start": time.time()}
+
+        def _end(step_info, **extra):
+            step_info["duration_s"] = round(time.time() - step_info["start"], 2)
+            step_info.update(extra)
+            del step_info["start"]
+            trace.append(step_info)
+
         # 1. Retrieve
+        s = _step("Retrieval")
         rankings = retrieve_all_strategies(
             query, self.vectorstore, self.article_index,
             self.G, self.node_list, self.node_embeddings,
             self.embedder, self.corpus_by_id,
         )
-
         selected_rank = rankings.get(strategy, rankings["legal_hybrid"])
         doc_ids = selected_rank[:GENERATION_DOC_K]
         docs = docs_from_source_ids(doc_ids, self.corpus_by_id)
         graph_evidence = rankings["graph_evidence"]
+        _end(s, detail=f"{len(doc_ids)} docs, {len(graph_evidence)} graph triples")
 
         # 2. Extract requirements
+        s = _step("Question Decomposition")
         requirements = extract_question_requirements(query, self.verifier_llm)
+        _end(s, detail=f"{len(requirements)} requirements extracted")
 
         # 3. Generate draft
+        s = _step("Answer Generation")
         answer, gen_latency = generate_draft(
             self.generation_llm, docs, graph_evidence, query, requirements,
         )
         initial_answer = answer
+        _end(s, detail=f"{len(answer.split())} words generated")
 
         # 4. Validate
+        s = _step("Validation")
         validation = validate_answer(
             query, answer, docs, requirements,
             self.G, self.node_list, self.node_embeddings,
@@ -73,6 +91,12 @@ class CompliancePipeline:
             self.claim_llm, self.verifier_llm,
         )
         initial_validation = copy.deepcopy(validation)
+        _end(s, detail=(
+            f"{validation['total_claims']} claims, "
+            f"{validation['supported_claims']} supported, "
+            f"{validation['source_contradictions']} contradictions, "
+            f"whole-answer: {validation['whole_answer_verification']['status']}"
+        ))
 
         # 5. Route: accept / revise / reject
         attempts = 1
@@ -81,16 +105,22 @@ class CompliancePipeline:
 
         if validation["valid"]:
             final_status = "ACCEPTED"
+            trace.append({"step": "Routing", "duration_s": 0, "detail": "ACCEPTED"})
         elif attempts < MAX_ATTEMPTS:
+            trace.append({"step": "Routing", "duration_s": 0, "detail": "Validation failed -> REVISE"})
+
             # Revise
+            s = _step("Revision")
             answer, rev_latency = generate_revision(
                 self.generation_llm, docs, graph_evidence,
                 query, requirements, answer, validation,
             )
             gen_latency += rev_latency
             revised = True
+            _end(s, detail=f"{len(answer.split())} words in revised answer")
 
             # Re-validate
+            s = _step("Re-validation")
             validation = validate_answer(
                 query, answer, docs, requirements,
                 self.G, self.node_list, self.node_embeddings,
@@ -99,8 +129,13 @@ class CompliancePipeline:
             )
             attempts += 1
             final_status = "ACCEPTED" if validation["valid"] else "REJECTED"
+            _end(s, detail=(
+                f"{validation['total_claims']} claims, "
+                f"{validation['supported_claims']} supported -> {final_status}"
+            ))
         else:
             final_status = "REJECTED"
+            trace.append({"step": "Routing", "duration_s": 0, "detail": "REJECTED (max attempts)"})
 
         return {
             "query": query,
@@ -158,4 +193,5 @@ class CompliancePipeline:
                 "support_rate": initial_validation["support_rate"],
                 "whole_answer_status": initial_validation["whole_answer_verification"]["status"],
             } if revised else None,
+            "trace": trace,
         }
