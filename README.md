@@ -1,8 +1,17 @@
 # Compliance-Aware RAG for Financial Regulatory QA
 
+[![Streamlit App](https://static.streamlit.io/badges/streamlit_badge_black_white.svg)](https://compliance-aware-rag.streamlit.app)
+[![Python 3.11+](https://img.shields.io/badge/python-3.11+-blue.svg)](https://www.python.org/downloads/)
+[![LangChain](https://img.shields.io/badge/LangChain-0.3-green.svg)](https://python.langchain.com/)
+[![License: Academic](https://img.shields.io/badge/license-academic-lightgrey.svg)](#license)
+
+> A RAG system that doesn't just retrieve and generate -- it validates every claim, checks legal attribution, and rejects its own answer when it can't verify correctness.
+
 A production-grade compliance question-answering system that combines knowledge-graph-augmented retrieval with post-generation validation to answer financial regulatory questions grounded in EU legislation (MiFID II, MiFIR, Delegated Regulation 2017/565).
 
 Built as an MSc dissertation project at the University of Edinburgh and refactored into a deployable web application.
+
+**[Try the live demo](https://compliance-aware-rag.streamlit.app)** (bring your own OpenAI API key -- ~$0.02 per query)
 
 ## What Makes This Different
 
@@ -48,6 +57,14 @@ User Question
   |-- REJECT --> flag answer as unreliable
 ```
 
+## App Pages
+
+| Page | Description |
+|------|-------------|
+| **Compliance QA** | Main question-answering interface with full pipeline execution, validation display, and pipeline trace timeline |
+| **Knowledge Graph Explorer** | Interactive visualization of the regulatory knowledge graph -- browse entities, relationships, and explore neighbourhoods with pyvis |
+| **Retrieval Strategy Comparison** | Run all 4 retrieval strategies side-by-side on the same query -- overlap matrix, unique contributions, ranked results |
+
 ## Key Results (from dissertation evaluation)
 
 | Metric | Value |
@@ -56,6 +73,8 @@ User Question
 | Pipeline acceptance rate | 62% (31/50) |
 | Correct rejections | 84% of rejected answers had quality issues |
 | Cross-model agreement | 88% (GPT-4o vs Claude Sonnet) |
+| Knowledge graph | ~2,400 nodes, ~2,900 edges, 17 relation types |
+| LLM cost per query | ~$0.02 (GPT-4o-mini) |
 
 ## Tech Stack
 
@@ -64,6 +83,22 @@ User Question
 - **LLMs**: GPT-4o-mini (generation, validation, claim extraction)
 - **Embeddings**: OpenAI text-embedding-3-small + all-MiniLM-L6-v2
 - **Corpus**: 365 chunks from 3 EU regulatory instruments
+
+## Screenshots
+
+### Compliance QA — Pipeline Trace + Validated Answer
+![Pipeline trace showing step-by-step timing, followed by the validated answer with claim verification](docs/screenshots/qa_pipeline.png)
+
+### Knowledge Graph Explorer — Interactive Visualization
+![Interactive pyvis graph showing regulatory entity relationships with colour-coded relation types](docs/screenshots/kg_explorer.png)
+
+### Retrieval Strategy Comparison — Overlap Analysis
+![Side-by-side ranking comparison with overlap matrix showing how strategies complement each other](docs/screenshots/retrieval_comparison.png)
+
+> **Note:** Replace the screenshot paths above with actual screenshots of your running app. To capture them:
+> 1. Run the app locally with `streamlit run frontend/streamlit_app.py`
+> 2. Take screenshots of each page
+> 3. Save them in `docs/screenshots/`
 
 ## Quick Start
 
@@ -152,7 +187,10 @@ app/
     build_graph.py      # One-time graph construction script
     build_index.py      # One-time FAISS index construction script
   frontend/
-    streamlit_app.py    # Web UI
+    streamlit_app.py                          # Main QA page
+    pages/
+      2_Knowledge_Graph_Explorer.py           # Interactive KG visualization
+      3_Retrieval_Strategy_Comparison.py      # Side-by-side retrieval comparison
   requirements.txt
   Dockerfile
   setup.sh
