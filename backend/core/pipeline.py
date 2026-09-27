@@ -44,10 +44,12 @@ class CompliancePipeline:
         self.claim_llm = create_llm(api_key, CLAIM_EXTRACTION_MODEL)
         self.verifier_llm = create_llm(api_key, SOURCE_VERIFIER_MODEL)
 
-    def run(self, query, strategy="legal_hybrid"):
+    def run(self, query, strategy="legal_hybrid", on_step=None):
         trace = []
 
         def _step(name):
+            if on_step:
+                on_step(name, "running", None)
             return {"step": name, "start": time.time()}
 
         def _end(step_info, **extra):
@@ -55,6 +57,8 @@ class CompliancePipeline:
             step_info.update(extra)
             del step_info["start"]
             trace.append(step_info)
+            if on_step:
+                on_step(step_info["step"], "done", step_info)
 
         # 1. Retrieve
         s = _step("Retrieval")

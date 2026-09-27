@@ -150,25 +150,45 @@ if submit:
         "legal_hybrid": "legal_hybrid",
     }
 
-    with st.spinner("Running compliance-aware pipeline... (this takes 30-60s)"):
-        start_time = time.time()
-        try:
-            from backend.core.pipeline import CompliancePipeline
+    # --- Live pipeline progress ---
+    status_container = st.status("Running compliance-aware pipeline...", expanded=True)
+    step_labels = {}
 
-            pipeline = CompliancePipeline(
-                api_key=api_key,
-                **resources,
-            )
-            result = pipeline.run(question, strategy=strategy_map[strategy])
-            elapsed = time.time() - start_time
+    def on_step(name, state, info):
+        if state == "running":
+            step_labels[name] = status_container.empty()
+            step_labels[name].markdown(f"**{name}** — running...")
+            status_container.update(label=f"Running: {name}...")
+        elif state == "done" and info:
+            dur = info.get("duration_s", 0)
+            detail = info.get("detail", "")
+            if name in step_labels:
+                step_labels[name].markdown(f"**{name}** — {dur:.1f}s — {detail}")
 
-        except Exception as e:
-            error_msg = str(e)
-            if "authentication" in error_msg.lower() or "api key" in error_msg.lower() or "Incorrect API key" in error_msg:
-                st.error("Invalid OpenAI API key. Please check your key in the sidebar.")
-            else:
-                st.error(f"Pipeline error: {error_msg}")
-            st.stop()
+    start_time = time.time()
+    try:
+        from backend.core.pipeline import CompliancePipeline
+
+        pipeline = CompliancePipeline(
+            api_key=api_key,
+            **resources,
+        )
+        result = pipeline.run(question, strategy=strategy_map[strategy], on_step=on_step)
+        elapsed = time.time() - start_time
+        status_container.update(
+            label=f"Pipeline complete — {elapsed:.1f}s",
+            state="complete",
+            expanded=False,
+        )
+
+    except Exception as e:
+        error_msg = str(e)
+        status_container.update(label="Pipeline failed", state="error", expanded=False)
+        if "authentication" in error_msg.lower() or "api key" in error_msg.lower() or "Incorrect API key" in error_msg:
+            st.error("Invalid OpenAI API key. Please check your key in the sidebar.")
+        else:
+            st.error(f"Pipeline error: {error_msg}")
+        st.stop()
 
     # --- Display results ---
 
@@ -201,7 +221,14 @@ if submit:
         st.markdown("---")
 
     st.markdown("### Answer")
-    st.markdown(result["answer"])
+
+    def _stream_answer(text):
+        """Yield words with small delays to simulate streaming."""
+        for word in text.split(" "):
+            yield word + " "
+            time.sleep(0.02)
+
+    st.write_stream(_stream_answer(result["answer"]))
 
     st.markdown("### Validation")
     val = result["validation"]
