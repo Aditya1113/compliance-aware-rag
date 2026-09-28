@@ -90,6 +90,22 @@ strategy = st.sidebar.selectbox(
 )
 
 st.sidebar.markdown("---")
+st.sidebar.markdown("**Verification Engine**")
+use_jev = st.sidebar.checkbox(
+    "Use Jev (TypeSafe AI) for verification",
+    value=False,
+    help="Replace GPT-4o-mini with Jev's System One model for claim and whole-answer verification. Much faster (~50-200x) but requires a TypeSafe API key.",
+)
+typesafe_api_key = None
+if use_jev:
+    typesafe_api_key = st.sidebar.text_input(
+        "TypeSafe API Key",
+        type="password",
+        placeholder="ts-...",
+        help="Your TypeSafe key for Jev verification. Never stored.",
+    )
+
+st.sidebar.markdown("---")
 st.sidebar.markdown("""
 **How it works:**
 1. Your question is decomposed into requirements
@@ -172,6 +188,7 @@ if submit:
         pipeline = CompliancePipeline(
             api_key=api_key,
             **resources,
+            typesafe_api_key=typesafe_api_key if use_jev else None,
         )
         result = pipeline.run(question, strategy=strategy_map[strategy], on_step=on_step)
         elapsed = time.time() - start_time
@@ -193,10 +210,11 @@ if submit:
     # --- Display results ---
 
     status = result["final_status"]
+    verifier_label = "Jev (TypeSafe)" if use_jev else "GPT-4o-mini"
     if status == "ACCEPTED":
-        st.success(f"ACCEPTED  |  {elapsed:.1f}s  |  Strategy: {result['strategy']}")
+        st.success(f"ACCEPTED  |  {elapsed:.1f}s  |  Strategy: {result['strategy']}  |  Verifier: {verifier_label}")
     else:
-        st.warning(f"REJECTED  |  {elapsed:.1f}s  |  Strategy: {result['strategy']}")
+        st.warning(f"REJECTED  |  {elapsed:.1f}s  |  Strategy: {result['strategy']}  |  Verifier: {verifier_label}")
 
     # --- Pipeline Trace Timeline ---
     if result.get("trace"):
