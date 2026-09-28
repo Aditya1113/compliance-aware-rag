@@ -24,8 +24,10 @@ class CompliancePipeline:
     """Encapsulates the full compliance-aware RAG pipeline with BYOK."""
 
     def __init__(self, api_key, corpus, corpus_by_id, article_index,
-                 G, node_list, node_embeddings, embedder, nlp, vectorstore):
+                 G, node_list, node_embeddings, embedder, nlp, vectorstore,
+                 typesafe_api_key=None):
         self.api_key = api_key
+        self.typesafe_api_key = typesafe_api_key
         self.corpus = corpus
         self.corpus_by_id = corpus_by_id
         self.article_index = article_index
@@ -93,6 +95,7 @@ class CompliancePipeline:
             self.G, self.node_list, self.node_embeddings,
             self.embedder, self.nlp,
             self.claim_llm, self.verifier_llm,
+            typesafe_api_key=self.typesafe_api_key,
         )
         initial_validation = copy.deepcopy(validation)
         _end(s, detail=(
@@ -130,6 +133,7 @@ class CompliancePipeline:
                 self.G, self.node_list, self.node_embeddings,
                 self.embedder, self.nlp,
                 self.claim_llm, self.verifier_llm,
+                typesafe_api_key=self.typesafe_api_key,
             )
             attempts += 1
             final_status = "ACCEPTED" if validation["valid"] else "REJECTED"
