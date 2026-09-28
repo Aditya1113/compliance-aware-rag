@@ -64,6 +64,8 @@ User Question
 | **Compliance QA** | Main question-answering interface with full pipeline execution, validation display, and pipeline trace timeline |
 | **Knowledge Graph Explorer** | Interactive visualization of the regulatory knowledge graph -- browse entities, relationships, and explore neighbourhoods with pyvis |
 | **Retrieval Strategy Comparison** | Run all 4 retrieval strategies side-by-side on the same query -- overlap matrix, unique contributions, ranked results |
+| **Evaluation Dashboard** | Interactive display of 50-question benchmark results -- retrieval metrics, pipeline outcomes, cross-model agreement, per-question drill-down |
+| **Custom Document QA** | Upload your own PDF/TXT regulatory document -- automatic chunking, FAISS indexing, optional KG extraction, then full pipeline QA |
 
 ## Key Results (from dissertation evaluation)
 
