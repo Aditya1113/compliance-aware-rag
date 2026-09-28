@@ -107,109 +107,6 @@ Return ONLY valid JSON:
     return _repair_requirement_fragments(requirements)
 
 
-# --- Jev-based verification ---
-
-def _get_jev_client(typesafe_api_key):
-    from typesafe_sdk import TypeSafeClient
-    return TypeSafeClient(api_key=typesafe_api_key)
-
-
-def verify_whole_answer_jev(query, answer, docs, typesafe_api_key):
-    """Whole-answer verification using TypeSafe Jev (System One model)."""
-    import time
-    from typesafe_sdk import Choice, Noul
-
-    client = _get_jev_client(typesafe_api_key)
-    doc_context = format_doc_evidence(docs)
-
-    state = f"QUESTION: {query}\n\nANSWER TO VERIFY: {answer}\n\nREGULATORY EVIDENCE: {doc_context[:4000]}"
-
-    start = time.perf_counter()
-    result = client.system_one(
-        state,
-        {
-            "verification": Choice(
-                instructions=(
-                    "Is this answer supported by the regulatory evidence with correct legal actor attribution? "
-                    "SUPPORTED means claims match evidence and duties are attributed to the correct legal actor. "
-                    "CONTRADICTED means at least one claim conflicts with evidence or attributes a duty to the wrong actor. "
-                    "NOT_ENOUGH_EVIDENCE means the evidence is insufficient."
-                ),
-                criteria={
-                    "SUPPORTED": "Claims match evidence, correct legal actor attribution",
-                    "CONTRADICTED": "Claims conflict with evidence or wrong legal actor",
-                    "NOT_ENOUGH_EVIDENCE": "Evidence insufficient to determine",
-                },
-            ),
-            "has_contradiction": Noul(
-                instructions="Does the answer attribute any duty or responsibility to the wrong legal actor based on the evidence?"
-            ),
-        },
-    )
-    latency = time.perf_counter() - start
-
-    status = result.choices["verification"].choice
-    if status not in {"SUPPORTED", "CONTRADICTED", "NOT_ENOUGH_EVIDENCE"}:
-        status = "NOT_ENOUGH_EVIDENCE"
-
-    contradiction_prob = result.nouls["has_contradiction"].noul
-    confidence = result.choices["verification"].confidence
-
-    return {
-        "status": status,
-        "reason": f"Jev confidence={confidence:.2f}, contradiction_prob={contradiction_prob:.2f}",
-        "latency_s": round(latency, 3),
-        "jev_confidence": round(confidence, 3),
-    }
-
-
-def verify_claims_jev(claims, docs, query, typesafe_api_key):
-    """Per-claim verification using TypeSafe Jev."""
-    import time
-    from typesafe_sdk import Choice
-
-    client = _get_jev_client(typesafe_api_key)
-    doc_context = format_doc_evidence(docs)
-    results = []
-
-    for claim in claims:
-        claim_text = f"{claim['subject']} {claim['relation']} {claim['object']}"
-        state = f"CLAIM: {claim_text}\nQUESTION CONTEXT: {query}\nREGULATORY EVIDENCE: {doc_context[:3000]}"
-
-        start = time.perf_counter()
-        result = client.system_one(
-            state,
-            {
-                "status": Choice(
-                    instructions=(
-                        "Is this specific claim supported by the regulatory evidence? "
-                        "Check that the duty is attributed to the correct legal actor."
-                    ),
-                    criteria={
-                        "SUPPORTED": "Claim is explicitly supported by evidence with correct actor",
-                        "CONTRADICTED": "Claim conflicts with evidence or wrong actor",
-                        "NOT_ENOUGH_EVIDENCE": "Evidence insufficient for this claim",
-                    },
-                ),
-            },
-        )
-        latency = time.perf_counter() - start
-
-        status = result.choices["status"].choice
-        if status not in {"SUPPORTED", "CONTRADICTED", "NOT_ENOUGH_EVIDENCE"}:
-            status = "NOT_ENOUGH_EVIDENCE"
-
-        results.append({
-            "claim_index": len(results),
-            "status": status,
-            "evidence_source_ids": [],
-            "reason": f"Jev confidence={result.choices['status'].confidence:.2f}",
-            "latency_ms": round(latency * 1000, 1),
-        })
-
-    return results
-
-
 # --- Whole-answer verification ---
 
 def verify_whole_answer(query, answer, docs, verifier_llm):
@@ -339,7 +236,7 @@ def verify_against_sources(question, answer, claims, requirements, docs, verifie
 
 def validate_answer(query, answer, docs, requirements, G, node_list, node_embeddings,
                     embedder, nlp, claim_llm, verifier_llm,
-                    threshold=VALIDATION_THRESHOLD, typesafe_api_key=None):
+                    threshold=VALIDATION_THRESHOLD):
     if not is_answered(answer):
         return {
             "valid": False, "support_rate": None, "total_claims": 0,
@@ -363,20 +260,8 @@ def validate_answer(query, answer, docs, requirements, G, node_list, node_embedd
         for c in claims
     ]
 
-    if typesafe_api_key:
-        # Use Jev for claim-level and whole-answer verification
-        jev_claim_results = verify_claims_jev(claims, docs, query, typesafe_api_key)
-        source_report = {
-            "claim_results": jev_claim_results,
-            "requirement_results": verify_against_sources(
-                query, answer, claims, requirements, docs, verifier_llm,
-            )["requirement_results"],
-        }
-        whole_answer = verify_whole_answer_jev(query, answer, docs, typesafe_api_key)
-    else:
-        source_report = verify_against_sources(query, answer, claims, requirements, docs, verifier_llm)
-        whole_answer = verify_whole_answer(query, answer, docs, verifier_llm)
-
+    source_report = verify_against_sources(query, answer, claims, requirements, docs, verifier_llm)
+    whole_answer = verify_whole_answer(query, answer, docs, verifier_llm)
     whole_contradicted = whole_answer["status"] == "CONTRADICTED"
 
     combined_claims = []
