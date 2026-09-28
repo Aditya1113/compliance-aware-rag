@@ -155,6 +155,9 @@ if submit:
     if not api_key:
         st.error("Please enter your OpenAI API key in the sidebar.")
         st.stop()
+    if use_jev and not typesafe_api_key:
+        st.error("Please enter your TypeSafe API key in the sidebar, or uncheck 'Use Jev'.")
+        st.stop()
     if not question or len(question.strip()) < 10:
         st.error("Please enter a question (at least 10 characters).")
         st.stop()
@@ -201,7 +204,10 @@ if submit:
     except Exception as e:
         error_msg = str(e)
         status_container.update(label="Pipeline failed", state="error", expanded=False)
-        if "authentication" in error_msg.lower() or "api key" in error_msg.lower() or "Incorrect API key" in error_msg:
+        err_lower = error_msg.lower()
+        if "typesafe" in err_lower or "ts-" in error_msg:
+            st.error(f"TypeSafe/Jev API error: {error_msg}")
+        elif "Incorrect API key" in error_msg or ("authentication" in err_lower and "openai" in err_lower):
             st.error("Invalid OpenAI API key. Please check your key in the sidebar.")
         else:
             st.error(f"Pipeline error: {error_msg}")
